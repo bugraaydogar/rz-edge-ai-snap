@@ -1,0 +1,61 @@
+diff -urN rz-edge-ai-demo/mainwindow.cpp rz-ai-edge-snap/src/mainwindow.cpp
+--- rz-edge-ai-demo/mainwindow.cpp	2025-02-18 16:57:04.174572776 +0300
++++ rz-ai-edge-snap/src/mainwindow.cpp	2025-02-26 13:03:44.210472175 +0300
+@@ -200,8 +200,12 @@
+                 cameraLocation = QString("/dev/video0");
+         }
+     } else {
+-        setWindowTitle("RZ Edge AI Demo");
+-        boardInfo = HW_INFO_WARNING;
++        setWindowTitle("RZ Edge AI Demo - RZ/G2L");
++        boardInfo = G2L_HW_INFO;
++        board = G2L;
++
++        if (cameraLocation.isEmpty())
++            cameraLocation = QString("/dev/video0");
+     }
+ 
+     if (demoMode == PE)
+diff -urN rz-edge-ai-demo/rz-edge-ai-demo.pro rz-ai-edge-snap/src/rz-edge-ai-demo.pro
+--- rz-edge-ai-demo/rz-edge-ai-demo.pro	2025-02-18 16:57:04.175572827 +0300
++++ rz-ai-edge-snap/src/rz-edge-ai-demo.pro	2025-02-26 13:03:47.978441234 +0300
+@@ -22,6 +22,7 @@
+ 
+ # Ignore a lot of build warnings from Qt code
+ QMAKE_CXXFLAGS += "-Wno-deprecated-copy"
++QMAKE_LFLAGS += -Wl,-rpath,/root/stage/usr/lib
+ 
+ SOURCES += \
+     audiocommand.cpp \
+@@ -52,15 +53,16 @@
+     mainwindow.ui
+ 
+ INCLUDEPATH += \
+-    $$(SDKTARGETSYSROOT)/usr/include/opencv4 \
+-    $$(SDKTARGETSYSROOT)/usr/include/tensorflow/lite/tools/make/downloads/flatbuffers/include \
+-    $$(SDKTARGETSYSROOT)/usr/include/armnn \
++    /usr/include/opencv4 \
++    /root/stage/usr/include \
++    /root/stage/usr/include/tensorflow \
++    /root/stage/usr/include/delegate \
++    /root/stage/usr/include/armnn \    
+ 
+ LIBS += \
+-    -L $$(SDKTARGETSYSROOT)/usr/lib64 \
++    -L /root/stage/usr/lib \
+     -larmnn \
+     -larmnnDelegate \
+-    -larmnnUtils \
+     -lasound \
+     -lopencv_core \
+     -lopencv_imgproc \
+@@ -75,7 +77,6 @@
+     -lXNNPACK \
+     -lpthreadpool \
+     -lcpuinfo \
+-    -lclog \
+     -lfft2d_fftsg \
+     -lfarmhash \
+-    -lsndfile
+\ No newline at end of file
++    -lsndfile

@@ -1,0 +1,289 @@
+name: rz-edge-ai-snap
+version: git
+summary: RZG2L Edge AI Demo Setup
+description: An application snap that demonstrates RZG2L's capabilities
+confinement: devmode
+compression: lzo
+grade: stable
+base: core24
+
+apps:
+  rz-edge-ai:
+    command-chain: &_command-chain
+      - bin/gpu-2404-wrapper
+      - bin/wayland-launch
+      - bin/dbus-launch
+    command: &_command usr/bin/rz-edge-ai-demo
+    plugs: &_plugs
+      - opengl
+      - wayland
+      - audio-playback
+      - network-bind
+    environment: &_environment
+      # These environment variables are typically needed by Qt applications to ensue the snapped version of
+      # Qt components are found and used
+      QT_QPA_PLATFORM: wayland
+      QT_PLUGIN_PATH: ${SNAP}/usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/qt5/plugins/
+      QT_QPA_PLATFORM_PLUGIN_PATH: ${SNAP}/usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/qt5/plugins/platforms/
+      QML2_IMPORT_PATH: ${SNAP}/usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/qt5/qml
+      LD_LIBRARY_PATH: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/blas/:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/lapack/:${LD_LIBRARY_PATH}
+
+  daemon:
+    daemon: simple
+    restart-delay: 3s
+    restart-condition: always
+    command-chain: *_command-chain
+    command: *_command
+    plugs: *_plugs
+    environment: *_environment
+
+# This is one of four snippets that relate to providing the userspace graphics needed by your application.
+# You can treat this as "magic" so long as you don't need to make changes.
+# On the Mir website there's a lot more detail on [the gpu-2404 Snap interface](https://mir-server.io/docs/the-gpu-2404-snap-interface) and it's use.
+plugs:
+  gpu-2404:
+    interface: content
+    target: $SNAP/gpu-2404
+    default-provider: mesa-2404
+
+environment:
+  # Other, generally useful environment settings...
+  # XDG config
+  XDG_CACHE_HOME:  $SNAP_USER_COMMON/.cache
+  XDG_CONFIG_HOME: $SNAP_USER_DATA/.config
+  XDG_CONFIG_DIRS: $SNAP/etc/xdg
+  XDG_DATA_DIRS:   $SNAP/usr/local/share:$SNAP/usr/share
+  # XKB config
+  XKB_CONFIG_ROOT: $SNAP/usr/share/X11/xkb
+
+# The `layout` ensures that files can be found by applications where they are expected by the toolkit or application.
+layout:
+  /usr/share/libdrm:
+    bind: $SNAP/gpu-2404/libdrm
+  /usr/share/drirc.d:
+    symlink: $SNAP/gpu-2404/drirc.d
+  # Other, generally useful paths
+  /usr/share/fonts:
+    bind: $SNAP/usr/share/fonts
+  /usr/share/icons:
+    bind: $SNAP/usr/share/icons
+  /usr/share/sounds:
+    bind: $SNAP/usr/share/sounds
+  /etc/fonts:
+    bind: $SNAP/etc/fonts
+  /usr/share/alsa:
+    bind: $SNAP/usr/share/alsa
+  /opt/rz-edge-ai-demo:
+    bind: $SNAP/opt/rz-edge-ai-demo
+
+parts:
+  tensorflow-lite:
+    source: https://github.com/tensorflow/tensorflow.git
+    source-tag: v2.15.1
+    plugin: nil
+    override-build: |
+
+     patch -p1 < ${CRAFT_PROJECT_DIR}/patches/0001-tensorflow-lite-Do-not-build-XNNPack-into-library-ou.patch
+
+
+      export SNAPCRAFT_CMAKE_ARGS="
+        -DTFLITE_ENABLE_RUY=ON
+        -DTFLITE_ENABLE_XNNPACK=ON
+        -DCMAKE_SYSTEM_NAME=Linux
+        -DCMAKE_SYSTEM_PROCESSOR=aarch64
+        -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc
+        -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++
+        -DCMAKE_CXX_FLAGS=-flax-vector-conversions
+        -DCMAKE_C_FLAGS=-flax-vector-conversions
+        -DABSL_PROPAGATE_CXX_STD=1
+        -DXNNPACK_ENABLE_ARM_I8MM=OFF
+      "
+
+      mkdir -p ${CRAFT_PART_BUILD}
+      cd ${CRAFT_PART_BUILD}
+      cmake ${CRAFT_PART_SRC}/tensorflow/lite/examples/minimal ${SNAPCRAFT_CMAKE_ARGS}
+      cmake --build . -- -j"${CRAFT_PARALLEL_BUILD_COUNT}"
+      DESTDIR="${CRAFT_PART_INSTALL}" cmake --build . --target install
+      
+      mkdir -p ${CRAFT_PART_INSTALL}/usr/lib
+      mkdir -p ${CRAFT_PART_INSTALL}/usr/include/tensorflow
+
+      cp ${CRAFT_PART_BUILD}/tensorflow-lite/libtensorflow-lite.a ${CRAFT_PART_INSTALL}/usr/lib/
+      
+      mkdir -p ${CRAFT_PART_INSTALL}/usr/include/tensorflow/flatbuffers
+      cp ${CRAFT_PART_BUILD}/flatbuffers/include/flatbuffers/*.h ${CRAFT_PART_INSTALL}/usr/include/tensorflow/flatbuffers
+      mkdir -p ${CRAFT_PART_INSTALL}/usr/include/tensorflow/flatbuffers/pch
+      cp ${CRAFT_PART_BUILD}/flatbuffers/include/flatbuffers/pch/*.h ${CRAFT_PART_INSTALL}/usr/include/tensorflow/flatbuffers/pch
+
+      cp ${CRAFT_PART_BUILD}/_deps/flatbuffers-build/libflatbuffers.a ${CRAFT_PART_INSTALL}/usr/lib/
+      cp ${CRAFT_PART_BUILD}/_deps/ruy-build/ruy/libruy*.a ${CRAFT_PART_INSTALL}/usr/lib/
+      cp ${CRAFT_PART_BUILD}/_deps/xnnpack-build/libXNNPACK.a ${CRAFT_PART_INSTALL}/usr/lib/
+      cp ${CRAFT_PART_BUILD}/_deps/fft2d-build/libfft2d_fftsg2d.a ${CRAFT_PART_INSTALL}/usr/lib/
+      cp ${CRAFT_PART_BUILD}/_deps/fft2d-build/libfft2d_fftsg.a ${CRAFT_PART_INSTALL}/usr/lib/
+      cp ${CRAFT_PART_BUILD}/_deps/farmhash-build/libfarmhash.a ${CRAFT_PART_INSTALL}/usr/lib/
+      cp ${CRAFT_PART_BUILD}/_deps/abseil-cpp-build/absl/strings/libabsl_strings.a ${CRAFT_PART_INSTALL}/usr/lib/
+      cp ${CRAFT_PART_BUILD}/_deps/abseil-cpp-build/absl/synchronization/libabsl_synchronization.a ${CRAFT_PART_INSTALL}/usr/lib/
+      cp ${CRAFT_PART_BUILD}/_deps/abseil-cpp-build/absl/synchronization/libabsl_graphcycles_internal.a ${CRAFT_PART_INSTALL}/usr/lib/
+      cp ${CRAFT_PART_BUILD}/_deps/ruy-build/ruy/profiler/libruy_profiler_instrumentation.a ${CRAFT_PART_INSTALL}/usr/lib/
+      cp ${CRAFT_PART_BUILD}/pthreadpool/libpthreadpool.a ${CRAFT_PART_INSTALL}/usr/lib/
+      cp ${CRAFT_PART_BUILD}/_deps/cpuinfo-build/libcpuinfo.a ${CRAFT_PART_INSTALL}/usr/lib/
+
+
+      mkdir -p ${CRAFT_PART_INSTALL}/usr/include/tensorflow/lite
+      mkdir -p ${CRAFT_PART_INSTALL}/usr/include/tensorflow/core
+
+      cd "${CRAFT_PART_SRC}/tensorflow/lite" && find . -name "*.h" -exec cp --parents {} "${CRAFT_PART_INSTALL}/usr/include/tensorflow/lite" \;
+      cd "${CRAFT_PART_SRC}/tensorflow/lite" && find . -name "*.inc" -exec cp --parents {} "${CRAFT_PART_INSTALL}/usr/include/tensorflow/lite" \;
+      cd "${CRAFT_PART_SRC}/tensorflow/lite" && find . -name "*.fbs" -exec cp --parents {} "${CRAFT_PART_INSTALL}/usr/include/tensorflow/lite" \;
+      cd "${CRAFT_PART_SRC}/tensorflow/core" && find . -name "*.h" -exec cp --parents {} "${CRAFT_PART_INSTALL}/usr/include/tensorflow/core" \;
+
+      cd ${CRAFT_PART_BUILD}
+
+      mkdir -p ${CRAFT_PART_INSTALL}/usr/include/tensorflow/tsl/platform
+      cp ${CRAFT_PART_SRC}/third_party/xla/third_party/tsl/tsl/platform/*.h ${CRAFT_PART_INSTALL}/usr/include/tensorflow/tsl/platform
+
+      mkdir -p ${CRAFT_PART_INSTALL}/usr/lib/python3/site-packages/tflite_runtime/
+      cp -r ${CRAFT_PART_BUILD}/tensorflow/python/* ${CRAFT_PART_INSTALL}/usr/lib/python3/site-packages/tflite_runtime/
+
+
+      cd ${CRAFT_PART_INSTALL}/usr/lib/
+      ar -M << EOF
+      CREATE libruy.a
+      ADDLIB libruy_apply_multiplier.a
+      ADDLIB libruy_context_get_ctx.a
+      ADDLIB libruy_kernel_arm.a
+      ADDLIB libruy_block_map.a
+      ADDLIB libruy_thread_pool.a
+      ADDLIB libruy_have_built_path_for_avx512.a
+      ADDLIB libruy_pack_avx.a
+      ADDLIB libruy_blocking_counter.a
+      ADDLIB libruy_denormal.a
+      ADDLIB libruy_pack_arm.a
+      ADDLIB libruy_pack_avx2_fma.a
+      ADDLIB libruy_prepare_packed_matrices.a
+      ADDLIB libruy_kernel_avx.a
+      ADDLIB libruy_system_aligned_alloc.a
+      ADDLIB libruy_kernel_avx512.a
+      ADDLIB libruy_allocator.a
+      ADDLIB libruy_tune.a
+      ADDLIB libruy_kernel_avx2_fma.a
+      ADDLIB libruy_cpuinfo.a
+      ADDLIB libruy_trmul.a
+      ADDLIB libruy_pack_avx512.a
+      ADDLIB libruy_prepacked_cache.a
+      ADDLIB libruy_ctx.a
+      ADDLIB libruy_have_built_path_for_avx.a
+      ADDLIB libruy_frontend.a
+      ADDLIB libruy_have_built_path_for_avx2_fma.a
+      ADDLIB libruy_context.a
+      ADDLIB libruy_wait.a
+      ADDLIB libruy_profiler_instrumentation.a
+      SAVE
+      END
+      EOF
+
+      # Optionally, index the library 
+      ranlib libruy.a
+
+  armnn:
+    source: https://github.com/ARM-software/armnn/releases/download/v24.05/ArmNN-linux-aarch64.tar.gz
+    plugin: nil
+    override-build: | 
+      echo "$(pwd)"
+      mkdir -p ${CRAFT_PART_INSTALL}/usr/include
+      mkdir -p ${CRAFT_PART_INSTALL}/usr/lib
+
+      mv ${CRAFT_PART_BUILD}/include/armnnDelegate ${CRAFT_PART_BUILD}/include/delegate
+
+      cp -r ${CRAFT_PART_BUILD}/include/* ${CRAFT_PART_INSTALL}/usr/include/
+      cp -a ${CRAFT_PART_BUILD}/*.so* ${CRAFT_PART_BUILD}/*.a ${CRAFT_PART_INSTALL}/usr/lib/
+      cp -a ${CRAFT_PART_BUILD}/delegate/*.so* ${CRAFT_PART_INSTALL}/usr/lib/
+
+  rz-edge-ai:
+    after:
+      - tensorflow-lite
+      - armnn
+    source: https://github.com/renesas-rz/rz-edge-ai-demo.git
+    plugin: nil
+    override-build: |
+      patch -p1 < ${CRAFT_PROJECT_DIR}/patches/rz-edge-ai-demo.patch
+      qmake .
+      make CXXFLAGS="-std=c++14" -j$(nproc)
+      make install ${CRAFT_PART_INSTALL}
+      cp ${CRAFT_PART_BUILD}/rz-edge-ai-demo ${CRAFT_PART_INSTALL}/usr/bin/
+
+    build-packages:
+      - g++-aarch64-linux-gnu
+      - qtbase5-dev 
+      - qtchooser 
+      - qt5-qmake 
+      - qttools5-dev
+      - qttools5-dev-tools
+      - qtmultimedia5-dev
+      - libasound2-dev
+      - libsndfile1-dev
+      - libopencv-dev
+    stage-packages:
+      - qtwayland5
+      - xkb-data
+      - libqt5core5a
+      - libqt5gui5
+      - libqt5multimedia5
+      - libqt5widgets5
+      - libasound2
+      - libsndfile1
+      - libopencv-dev
+      - libopenal-dev
+      - liblapack-dev
+      - liboss4-salsa2
+      - liblapack-dev
+      - libblas-dev
+
+  
+  models:
+    source: models
+    plugin: dump
+    organize:
+      "*": /opt/rz-edge-ai-demo/
+  
+  # Because Bomber won't run without a session dbus, and this isn't available to daemons on core
+  # (there is no "session") we need to include a dbus session in the snap.
+  # The `source: dbus` contains a script and configuration file for running `dbus-run-session`.
+  dbus:
+    plugin: dump
+    source: dbus
+
+  # Some utility scripts for setting up the Wayland environment
+  setup:
+    plugin: dump
+    source: wayland-launch
+    override-build: |
+      # The plugs needed to run Wayland. (wayland-launch checks them, setup.sh connects them)
+      # You may add further plugs here if you want these options
+      PLUGS="opengl wayland gpu-2404"
+      sed --in-place "s/%PLUGS%/$PLUGS/g" $CRAFT_PART_BUILD/bin/wayland-launch
+      sed --in-place "s/%PLUGS%/$PLUGS/g" $CRAFT_PART_BUILD/bin/setup.sh
+      craftctl default
+    stage-packages:
+      - inotify-tools
+
+  gpu-2404:
+    after:
+      - rz-edge-ai
+      - dbus
+      - setup
+    source: https://github.com/canonical/gpu-snap.git
+    plugin: dump
+    override-prime: |
+      craftctl default
+      ${CRAFT_PART_SRC}/bin/gpu-2404-cleanup mesa-2404
+      cd "$CRAFT_PRIME/usr/share/"
+      rm -rf bug drirc.d glvnd libdrm lintian man \
+             bash-completion dbus-1 help kconf_update kservices5 libinput locale openal pkgconfig \
+             applications doc kf5 kservicetypes5 libthai metainfo perl qlogging-categories5 thumbnailers xml \
+             apport config.kcfg doc-base GConf gnupg info knotifications5 kxmlgui5 libwacom themes sounds
+    prime:
+      - bin/gpu-2404-wrapper
+
+platforms:
+  arm64:
