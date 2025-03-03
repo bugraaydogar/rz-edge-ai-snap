@@ -184,6 +184,8 @@ parts:
 
       # Optionally, index the library 
       ranlib libruy.a
+    build-packages:
+      - cmake
 
   armnn:
     source: https://github.com/ARM-software/armnn/releases/download/v24.05/ArmNN-linux-aarch64.tar.gz
